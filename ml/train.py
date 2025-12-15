@@ -1,0 +1,3 @@
+# LOAD DATA FROM POSTGRES
+# load from raw_table, clean and save to clean_table
+# load from clean_table and save to preprocess_table...
