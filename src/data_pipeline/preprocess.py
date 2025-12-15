@@ -1,5 +1,8 @@
 import pandas as pd
 
+from src.utils.logger import logger
+from src.db.config import engine
+
 class Preprocessor:
 
     @staticmethod
@@ -8,7 +11,7 @@ class Preprocessor:
 
         customers["name"] = customers["name"].str.lower()
 
-        customers["signup_date"] = pd.to_datetime(customers["signup_date"], errors="coerce")
+        customers["signup_date"] = pd.to_datetime(customers["signup_date"], errors="coerce", utc=True)
 
         customers.dropna(subset=["customer_id", "email", "signup_date"], inplace=True)
 
@@ -52,7 +55,7 @@ class Feature_Engineer:
         customers: pd.DataFrame, 
         transactions: pd.DataFrame,
         products: pd.DataFrame):
-        
+
         merged = transactions.merge(products, on="product_id", how="left")
         merged["total_purchase_value"] = merged["price"] * merged["quantity"]
 
@@ -66,12 +69,16 @@ class Feature_Engineer:
         last_purchase = merged.groupby("customer_id")["purchase_date"].max()  
         recency_days = (today - last_purchase).dt.days
 
-        # add fnew eatures to the customers data
         customers = customers.set_index("customer_id")
+
+        days_since_signup = (today - customers["signup_date"]).dt.days
+
+        # add fnew eatures to the customers data
         customers["total_spent"] = total_spent
         customers["num_purchases"] = num_purchases
         customers["avg_purchase_value"] = avg_purchase
         customers["recency_days"] = recency_days
+        customers["days_since_signup"] = days_since_signup
 
         # fill missing with 0 for customers that did not purchase anything
         customers.fillna(
@@ -121,9 +128,7 @@ class Feature_Engineer:
     
     @staticmethod
     def engineer_tx_features(
-            transactions: pd.DataFrame, 
-            customers: pd.DataFrame,
-            products: pd.DataFrame,            
+            transactions: pd.DataFrame,             
         ):
         
         transactions = transactions.sort_values(
@@ -137,36 +142,69 @@ class Feature_Engineer:
             .dt.days
         )
 
-        # transactions["days_since_last_purchase"].fillna(999, inplace=True)
+        transactions["days_since_last_purchase"] = transactions["days_since_last_purchase"].fillna(
+            transactions["days_since_last_purchase"].median())
 
-        # attach product & customer features (for embeddings)
+        return transactions
+    
+    @staticmethod
+    def merge_all_datasets(
+            transactions: pd.DataFrame, 
+            customers: pd.DataFrame,
+            products: pd.DataFrame, 
+    ):
+
+        # attach product & customer features to tx data (for embeddings and other usecases.)
         transactions = transactions.merge(
             products.reset_index(), on="product_id", how="left"
         )
-        transactions = transactions.merge(
+        all_merged = transactions.merge(
             customers.reset_index(), on="customer_id", how="left"
         )
 
-        return transactions
+        logger.info("datasets merged...")
+
+        return all_merged
 
 
 if __name__ == "__main__":
-    pass
-    # from src.data_pipeline.load_data import *
+    # pass
+    from src.data_pipeline.load_data import *
 
-    # loader = DataLoader()
-    # customers = loader.load_customers()
-    # tx = loader.load_transactions()
-    # products = loader.load_products()
+    loader = DataLoader()
+    customers = loader.load_customers()
+    tx = loader.load_transactions()
+    products = loader.load_products()
 
-    # prep = Preprocessor()
-    # clean_cutomers = prep.clean_customer_data(customers)
-    # clean_tx = prep.clean_tx_data(tx)
+    prep = Preprocessor()
+    clean_cutomers = prep.clean_customer_data(customers)
+    clean_tx = prep.clean_tx_data(tx)
+    clean_prods = prep.clean_product_data(products)
 
-    # # print(clean_cutomers.head())
+    feat_eng = Feature_Engineer()
+    customers_eng = feat_eng.engineer_customer_features(customers=clean_cutomers, products=products, transactions=clean_tx)
+    # products_eng = feat_eng.engineer_product_features(transactions=clean_tx, products=clean_prods)
+    # tx_eng = feat_eng.engineer_tx_features(clean_tx)
 
-    # feat_eng = Feature_Engineer()
-    # customers_eng = feat_eng.engineer_customer_features(customers=clean_cutomers, products=products, transactions=clean_tx)
+    # print("ENGINEERED")
 
-    # print(customers_eng[["total_spent", "num_purchases"]])
-    # print(customers_eng)
+    # merged = feat_eng.merge_all_datasets(tx_eng, customers_eng, products_eng)
+
+    # print(merged.head())
+   
+    # table_name = 'all_engineered_merged'
+
+    # merged.to_sql(
+    #         table_name,
+    #         engine,
+    #         if_exists='replace',  # Options: 'fail', 'replace', 'append'
+    #         index=False             # Set to False to ignore writing the DataFrame index as a column
+    # )
+
+    # print(f"✅ Data successfully loaded into table '{table_name}' in the database.")
+
+    # # # Optional: Verify by reading the data back
+    # df_from_pg = pd.read_sql_table(table_name, engine)
+    # print("\nData read back from PostgreSQL:")
+    # print(df_from_pg)
+
