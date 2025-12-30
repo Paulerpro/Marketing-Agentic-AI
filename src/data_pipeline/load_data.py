@@ -1,6 +1,8 @@
 import pandas as pd
 from typing import Optional
 
+from src.db.config import engine
+
 class DataLoader:
     def __init__(self, data_dir: str = "data"):
         """
@@ -34,6 +36,9 @@ class DataLoader:
     def load_customers(self, nrows: Optional[int] = None) -> pd.DataFrame:
         path = f"{self.data_dir}/customers.csv"
         df = pd.read_csv(path, nrows=nrows)
+
+        # save_to_db(df, "raw_customers")
+
         return self._validate_dataframe(
             df,
             required_columns=["customer_id", "name", "email", "signup_date"],
@@ -43,6 +48,9 @@ class DataLoader:
     def load_products(self, nrows: Optional[int] = None) -> pd.DataFrame:
         path = f"{self.data_dir}/products.csv"
         df = pd.read_csv(path, nrows=nrows)
+
+        # save_to_db(df, "raw_products")
+
         return self._validate_dataframe(
             df,
             required_columns=["product_id", "product_name", "price"],
@@ -52,6 +60,9 @@ class DataLoader:
     def load_transactions(self, nrows: Optional[int] = None) -> pd.DataFrame:
         path = f"{self.data_dir}/transactions.csv"
         df = pd.read_csv(path, nrows=nrows)
+
+        # save_to_db(df, "raw_transactions")
+
         return self._validate_dataframe(
             df,
             required_columns=["transaction_id", "customer_id", "product_id", "purchase_date", "quantity"],
@@ -63,6 +74,9 @@ class DataLoader:
                 "quantity": int
             }
         )
+    
+def save_to_db(df, name):
+    df.to_sql(name, engine, if_exists="replace", index=False)
 
 
 if __name__ == "__main__":

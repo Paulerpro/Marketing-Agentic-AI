@@ -54,7 +54,20 @@ class Feature_Engineer:
     def engineer_customer_features(
         customers: pd.DataFrame, 
         transactions: pd.DataFrame,
-        products: pd.DataFrame):
+        products: pd.DataFrame,
+        as_of_end_date = None):
+
+        """
+        NOTE:
+        Temporal cutoff not enforced in v1.
+        This will be added in v2 retraining pipeline. Same for prod & tx features below
+        """
+        customers["signup_date"] = pd.to_datetime(
+            customers["signup_date"], utc=True, errors="coerce"
+        )
+        transactions["purchase_date"] = pd.to_datetime(
+            transactions["purchase_date"], utc=True, errors="coerce"
+        )
 
         merged = transactions.merge(products, on="product_id", how="left")
         merged["total_purchase_value"] = merged["price"] * merged["quantity"]
@@ -86,7 +99,7 @@ class Feature_Engineer:
                 "total_spent": 0,
                 "num_purchases": 0,
                 "avg_purchase_value": 0,
-                "recency_days": 999, # Debate this
+                "recency_days": 999, # Temporal fillup
             },
             inplace=True,
         )
@@ -106,7 +119,8 @@ class Feature_Engineer:
     @staticmethod
     def engineer_product_features(
             transactions: pd.DataFrame,
-            products: pd.DataFrame
+            products: pd.DataFrame,
+            as_of_end_date = None
         ):
 
         popularity = transactions.groupby("product_id")["transaction_id"].count()
@@ -128,7 +142,8 @@ class Feature_Engineer:
     
     @staticmethod
     def engineer_tx_features(
-            transactions: pd.DataFrame,             
+            transactions: pd.DataFrame,  
+            as_of_end_date = None           
         ):
         
         transactions = transactions.sort_values(
@@ -168,43 +183,5 @@ class Feature_Engineer:
 
 
 if __name__ == "__main__":
-    # pass
-    from src.data_pipeline.load_data import *
-
-    loader = DataLoader()
-    customers = loader.load_customers()
-    tx = loader.load_transactions()
-    products = loader.load_products()
-
-    prep = Preprocessor()
-    clean_cutomers = prep.clean_customer_data(customers)
-    clean_tx = prep.clean_tx_data(tx)
-    clean_prods = prep.clean_product_data(products)
-
-    feat_eng = Feature_Engineer()
-    customers_eng = feat_eng.engineer_customer_features(customers=clean_cutomers, products=products, transactions=clean_tx)
-    # products_eng = feat_eng.engineer_product_features(transactions=clean_tx, products=clean_prods)
-    # tx_eng = feat_eng.engineer_tx_features(clean_tx)
-
-    # print("ENGINEERED")
-
-    # merged = feat_eng.merge_all_datasets(tx_eng, customers_eng, products_eng)
-
-    # print(merged.head())
-   
-    # table_name = 'all_engineered_merged'
-
-    # merged.to_sql(
-    #         table_name,
-    #         engine,
-    #         if_exists='replace',  # Options: 'fail', 'replace', 'append'
-    #         index=False             # Set to False to ignore writing the DataFrame index as a column
-    # )
-
-    # print(f"✅ Data successfully loaded into table '{table_name}' in the database.")
-
-    # # # Optional: Verify by reading the data back
-    # df_from_pg = pd.read_sql_table(table_name, engine)
-    # print("\nData read back from PostgreSQL:")
-    # print(df_from_pg)
-
+    pass
+    

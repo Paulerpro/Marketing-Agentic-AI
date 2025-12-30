@@ -1,6 +1,29 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
+
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime
+
+from src.db.config import Base
+
+class CustomerDB(Base):
+    __tablename__ = 'clean_customers'
+
+    customer_id = Column(String, primary_key=True, index=True)
+    email = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    age = Column(Integer, nullable=False)
+    gender = Column(String)
+    country = Column(String)
+    city = Column(String)
+    phone_number = Column(String) 
+    interests = Column(String)
+    signup_date = Column(Date, nullable=False)
+    last_purchase_date = Column(Date)
+    total_spent = Column(Float)
+    purchase_frequency = Column(Float)
+    churn = Column(Integer)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 class RawCustomer(BaseModel):
     customer_id: str
@@ -22,10 +45,6 @@ class RawCustomer(BaseModel):
     ingested_at: datetime
     source: str # CSV file, API, or external database
 
-from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional
-from datetime import date
-
 class CleanCustomer(BaseModel):
     customer_id: str
     email: EmailStr
@@ -34,7 +53,7 @@ class CleanCustomer(BaseModel):
     gender: str 
     country: str
     city: str
-    phone_number: int
+    phone_number: str
     interests: str
     signup_date: date
     last_purchase_date: date 
@@ -57,7 +76,7 @@ class CustomerFeatures(BaseModel):
     gender: str 
     country: str
     city: str
-    phone_number: int
+    phone_number: str
     interests: str
     signup_date: date
     last_purchase_date: date 
