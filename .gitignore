@@ -1,5 +1,6 @@
 __pycache__/
-*.pycvenv
+*.pyc
+venv/
 .env
 TODO.txt
 
@@ -7,7 +8,8 @@ mlruns
 mlflow.db
 mlartifacts/
 
-data
+data/*
+!data/sample_data.sql
 
 messy.py
 

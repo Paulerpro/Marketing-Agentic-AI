@@ -1,0 +1,55 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec).
+# Copy to the repo root as render.yaml for Render to auto-detect it, or point a new
+# Blueprint at this path. Untested against a live Render account - review env vars
+# and plan names before deploying for real.
+
+databases:
+  - name: marketmind-db
+    plan: free
+    databaseName: ai_marketing_agent
+    user: marketmind
+
+services:
+  - type: web
+    name: marketmind-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: sh -c "uvicorn src.api.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: DB_HOST
+        fromDatabase: { name: marketmind-db, property: host }
+      - key: DB_PORT
+        fromDatabase: { name: marketmind-db, property: port }
+      - key: DB_NAME
+        fromDatabase: { name: marketmind-db, property: database }
+      - key: DB_USER
+        fromDatabase: { name: marketmind-db, property: user }
+      - key: DB_PASSWORD
+        fromDatabase: { name: marketmind-db, property: password }
+      - key: MLFLOW_TRACKING_URI
+        value: sqlite:////app/mlflow_store/mlflow.db
+      - key: ANTHROPIC_API_KEY
+        sync: false # set manually in the Render dashboard
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM_EMAIL
+        value: retention@example.com
+    disk:
+      name: mlflow-store
+      mountPath: /app/mlflow_store
+      sizeGB: 1
+
+  - type: web
+    name: marketmind-streamlit
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: sh -c "streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true"
+    envVars:
+      # Render's exact fromService property for a full https:// URL varies by
+      # plan/version - safest is to set this manually after the API service's
+      # first deploy, to its public URL (e.g. https://marketmind-api.onrender.com).
+      - key: API_BASE_URL
+        sync: false
