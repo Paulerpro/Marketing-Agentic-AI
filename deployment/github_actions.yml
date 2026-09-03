@@ -1,0 +1,31 @@
+name: CI
+
+# Copy this file to .github/workflows/ci.yml to activate it - GitHub only runs
+# workflows from that path, not from deployment/.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (syntax check)
+        run: python -m py_compile $(git ls-files '*.py')
+
+      - name: Run unit tests
+        # Integration tests need a live Postgres + a Production MLflow model, which
+        # this workflow doesn't provision - see pytest.ini's `integration` marker.
+        run: pytest tests/ -m "not integration" -q

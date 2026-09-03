@@ -52,22 +52,26 @@ class Feature_Engineer:
     
     @staticmethod
     def engineer_customer_features(
-        customers: pd.DataFrame, 
+        customers: pd.DataFrame,
         transactions: pd.DataFrame,
         products: pd.DataFrame,
         as_of_end_date = None):
 
         """
-        NOTE:
-        Temporal cutoff not enforced in v1.
-        This will be added in v2 retraining pipeline. Same for prod & tx features below
+        as_of_end_date anchors "now" for recency/signup-age features and bounds which
+        transactions are visible, so training on a historical window doesn't leak
+        transactions/labels that hadn't happened yet as of that point. Defaults to the
+        real current time for live scoring, where "now" genuinely is the as-of point.
         """
+        as_of = pd.Timestamp(as_of_end_date, tz="UTC") if as_of_end_date is not None else pd.Timestamp.now(tz="UTC")
+
         customers["signup_date"] = pd.to_datetime(
             customers["signup_date"], utc=True, errors="coerce"
         )
         transactions["purchase_date"] = pd.to_datetime(
             transactions["purchase_date"], utc=True, errors="coerce"
         )
+        transactions = transactions[transactions["purchase_date"] <= as_of]
 
         merged = transactions.merge(products, on="product_id", how="left")
         merged["total_purchase_value"] = merged["price"] * merged["quantity"]
@@ -78,13 +82,12 @@ class Feature_Engineer:
 
         avg_purchase = total_spent / num_purchases
 
-        today = pd.Timestamp.now(tz="UTC")
-        last_purchase = merged.groupby("customer_id")["purchase_date"].max()  
-        recency_days = (today - last_purchase).dt.days
+        last_purchase = merged.groupby("customer_id")["purchase_date"].max()
+        recency_days = (as_of - last_purchase).dt.days
 
         customers = customers.set_index("customer_id")
 
-        days_since_signup = (today - customers["signup_date"]).dt.days
+        days_since_signup = (as_of - customers["signup_date"]).dt.days
 
         # add fnew eatures to the customers data
         customers["total_spent"] = total_spent
@@ -123,6 +126,11 @@ class Feature_Engineer:
             as_of_end_date = None
         ):
 
+        if as_of_end_date is not None:
+            as_of = pd.Timestamp(as_of_end_date, tz="UTC")
+            purchase_date = pd.to_datetime(transactions["purchase_date"], utc=True, errors="coerce")
+            transactions = transactions[purchase_date <= as_of]
+
         popularity = transactions.groupby("product_id")["transaction_id"].count()
 
         products = products.set_index("product_id")
@@ -142,10 +150,15 @@ class Feature_Engineer:
     
     @staticmethod
     def engineer_tx_features(
-            transactions: pd.DataFrame,  
-            as_of_end_date = None           
+            transactions: pd.DataFrame,
+            as_of_end_date = None
         ):
-        
+
+        if as_of_end_date is not None:
+            as_of = pd.Timestamp(as_of_end_date, tz="UTC")
+            purchase_date = pd.to_datetime(transactions["purchase_date"], utc=True, errors="coerce")
+            transactions = transactions[purchase_date <= as_of]
+
         transactions = transactions.sort_values(
             by=["customer_id", "purchase_date"]
         )
