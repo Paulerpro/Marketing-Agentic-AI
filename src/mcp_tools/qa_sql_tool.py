@@ -18,7 +18,7 @@ from sqlalchemy import text
 from src.db.config import engine
 from src.utils.llm_provider import extract_text, get_chat_model
 
-ALLOWED_TABLES = {"clean_customers", "clean_products", "clean_transactions"}
+ALLOWED_TABLES = {"clean_customers", "clean_products", "clean_transactions", "churn_scores"}
 FORBIDDEN_KEYWORDS = re.compile(
     r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|attach|exec|call|merge)\b",
     re.IGNORECASE,
@@ -35,11 +35,13 @@ clean_products(product_id VARCHAR, product_name VARCHAR, category VARCHAR, \
 description VARCHAR, price FLOAT, stock_status VARCHAR)
 clean_transactions(transaction_id VARCHAR, customer_id VARCHAR, product_id VARCHAR, \
 total_price FLOAT, quantity INTEGER, purchase_date TIMESTAMP)
+churn_scores(customer_id VARCHAR, score FLOAT, risk_label VARCHAR, run_date TIMESTAMP, \
+model_version VARCHAR)
 
 Rules:
 - Respond with ONLY a single PostgreSQL SELECT statement, nothing else - no prose, no \
 markdown code fences, no trailing semicolon.
-- Never write or alter data, and never reference any table other than the three listed \
+- Never write or alter data, and never reference any table other than the ones listed \
 above.
 - Prefer explicit column lists over SELECT *. Add LIMIT 200 unless the question clearly \
 asks for an aggregate.
@@ -48,6 +50,16 @@ or `churn = 0` - never `IS TRUE`, `IS FALSE`, or a bare `WHERE churn`, all of wh
 PostgreSQL rejects on an integer column.
 - Every other column above is exactly the type listed - don't guess a different type \
 for any of them (e.g. don't treat stock_status as boolean, or price as integer).
+- churn (on clean_customers) and churn_scores.score/.risk_label are DIFFERENT facts. \
+churn is a static historical label ("did they ever officially churn"). churn_scores \
+holds the current CatBoost model's live prediction (score 0-1, risk_label \
+low/medium/high) and is one row per customer, refreshed on each scoring run - it's \
+the answer for any question about churn RISK, PROBABILITY, or PREDICTION. If a \
+question is ambiguous about which one it means, prefer churn_scores and join to \
+clean_customers on customer_id for name/email context.
+- All text values (name, email, city, country, category, product_name, etc.) are \
+stored lowercase. String comparisons must be case-insensitive - use ILIKE or wrap \
+both sides in LOWER(...), never a case-sensitive `=` on text.
 """
 
 

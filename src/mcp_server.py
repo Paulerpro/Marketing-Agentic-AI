@@ -21,7 +21,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from src.mcp_tools.campaign_logger_tool import get_campaign_history
-from src.mcp_tools.churn_scorer_tool import score_all_customers, score_one_customer
+from src.mcp_tools.churn_scorer_tool import score_and_persist_all_customers, score_one_customer
 from src.mcp_tools.email_sender_tool import send_retention_email
 from src.mcp_tools.product_match_tool import match_products_for_customer
 from src.mcp_tools.qa_sql_tool import answer_customer_question
@@ -39,10 +39,28 @@ def _items(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"items": rows, "count": len(rows)}
 
 
+def _current_model_version() -> str | None:
+    from ml.config import MODEL_NAME
+    from mlflow.tracking import MlflowClient
+
+    try:
+        versions = MlflowClient().get_latest_versions(MODEL_NAME, stages=["Production"])
+        return str(versions[0].version) if versions else None
+    except Exception:
+        return None
+
+
 @mcp.tool()
 def churn_scorer(min_score: float = 0.0, max_customers: int = 100) -> dict[str, Any]:
-    """Score churn risk for customers, highest risk first."""
-    return _items(score_all_customers(min_score=min_score, max_customers=max_customers))
+    """
+    Score churn risk for customers, highest risk first. Also persists every result to
+    the churn_scores table (upsert per customer), so Customer Q&A can answer questions
+    about live model predictions, not just the static historical churn label.
+    """
+    rows = score_and_persist_all_customers(
+        min_score=min_score, max_customers=max_customers, model_version=_current_model_version()
+    )
+    return _items(rows)
 
 
 @mcp.tool()

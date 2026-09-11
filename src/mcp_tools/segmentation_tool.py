@@ -4,18 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.mcp_tools.churn_scorer_tool import score_all_customers
+from src.mcp_tools.churn_scorer_tool import LOW_MAX, MEDIUM_MAX, risk_label as _risk_label, score_all_customers
 
-LOW_MAX = 0.50
-MEDIUM_MAX = 0.70
-
-
-def _risk_label(score: float) -> str:
-    if score >= MEDIUM_MAX:
-        return "high"
-    if score >= LOW_MAX:
-        return "medium"
-    return "low"
+__all__ = ["LOW_MAX", "MEDIUM_MAX", "segment_customers", "summarize_segments"]
 
 
 def segment_customers(
