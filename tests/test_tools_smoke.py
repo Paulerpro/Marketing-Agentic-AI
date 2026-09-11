@@ -1,12 +1,10 @@
-"""Smoke tests for tools and graph (no LLM). DB / MLflow-heavy paths are optional."""
+"""Smoke tests for tools and the agentic engine. DB / MLflow / LLM-heavy paths are optional."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
-from langchain_core.messages import HumanMessage
 
 from src.agents.tools.compliance_tools import validate_campaign_plan
 from src.agents.tools.ml_tools import score_churn_features
@@ -56,50 +54,42 @@ def test_build_merged_optional_db():
     assert not missing, f"merged frame missing columns: {missing}"
 
 
-def _initial_state(message: str) -> dict:
-    return {
-        "messages": [HumanMessage(content=message)],
-        "completed_workers": [],
-        "next": None,
-        "campaign_plan": None,
-        "compliance_result": None,
-        "qa_result": None,
-    }
+def test_agentic_no_llm_key_graceful(monkeypatch):
+    """No ANTHROPIC_API_KEY/GEMINI_API_KEY - should return a clear message, not raise."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    from src.agents.agentic import run_agentic_turn
+
+    out = asyncio.run(run_agentic_turn("what's the churn status of CUST0001?"))
+    assert out["completed_workers"] == []
+    assert out["campaign_plan"] is None
+    assert "no llm configured" in out["messages"][-1]["content"].lower()
 
 
 @pytest.mark.integration
-def test_graph_demo_full_optional():
-    """Needs DB + a Production churn model (via MCP subprocess); LLM steps degrade
-    gracefully to rendered templates without ANTHROPIC_API_KEY or GEMINI_API_KEY."""
-    from src.agents.graph import compile_graph
+def test_agentic_email_action_optional():
+    """Needs DB + a Production churn model + an LLM key (via MCP subprocess): asks the
+    agent to find the top-risk customer and email them, then checks the email_sender
+    tool call actually happened and was forced into dry_run regardless of what the
+    agent requested."""
+    from src.agents.agentic import run_agentic_turn
 
-    g = compile_graph()
-    out = asyncio.run(g.ainvoke(_initial_state("demo full")))
-    assert "compliance" in (out.get("completed_workers") or [])
-    assert out.get("campaign_plan")
-    assert out.get("compliance_result")
-
-
-def test_graph_analyze_keyword_no_db_crash():
-    """Should complete even when DB/model unavailable (worker catches errors)."""
-    from src.agents.graph import compile_graph
-
-    g = compile_graph()
-    out = asyncio.run(g.ainvoke(_initial_state("analyze churn")))
-    assert "data_analyst" in (out.get("completed_workers") or [])
-    last = out["messages"][-1].content
-    assert isinstance(last, str)
-    body = json.loads(last)
-    assert body.get("worker") == "data_analyst"
+    out = asyncio.run(
+        run_agentic_turn("Find the single highest churn-risk customer and send them a retention offer email.")
+    )
+    assert "email_sender" in out["completed_workers"]
+    assert out["campaign_plan"]["actions"]
+    assert all(a["dry_run"] is True for a in out["campaign_plan"]["actions"])
+    assert out["compliance_result"] is not None
 
 
-def test_graph_qa_keyword_no_key_crash():
-    """Should complete even without an LLM key / DB (worker catches errors)."""
-    from src.agents.graph import compile_graph
+@pytest.mark.integration
+def test_agentic_qa_optional():
+    """Needs DB + an LLM key: asks a data question, expects the agent to call
+    customer_qa and surface a structured qa_result."""
+    from src.agents.agentic import run_agentic_turn
 
-    g = compile_graph()
-    out = asyncio.run(g.ainvoke(_initial_state("ask: how many customers do we have?")))
-    assert "qa" in (out.get("completed_workers") or [])
-    last = out["messages"][-1].content
-    body = json.loads(last)
-    assert body.get("worker") == "qa"
+    out = asyncio.run(run_agentic_turn("How many customers do we have in total?"))
+    assert "customer_qa" in out["completed_workers"]
+    assert out["qa_result"] is not None
+    assert out["qa_result"].get("sql")

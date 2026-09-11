@@ -12,7 +12,11 @@ import os
 from typing import Any
 
 DEFAULT_CLAUDE_MODEL = "claude-opus-5"
-DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+# gemini-3.6-flash's free tier caps at 20 requests/day (quota is per-model) - too tight
+# for interactive use. gemini-flash-lite-latest has separate, more usable headroom and
+# still supports structured output + tool-calling fine. Override via GEMINI_MODEL /
+# COPY_AGENT_MODEL / QA_MODEL / AGENT_MODEL env vars if you have paid quota on 3.6.
+DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
 
 
 def active_provider() -> str | None:

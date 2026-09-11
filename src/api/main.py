@@ -1,5 +1,5 @@
-"""HTTP API for deterministic multi-agent demo runs, plus admin endpoints for the
-Streamlit UI (segments, campaign send/history, Q&A, model hub)."""
+"""HTTP API for the agentic /chat engine (src/agents/agentic.py), plus admin endpoints
+for the Streamlit UI (segments, campaign send/history, Q&A, model hub)."""
 
 from __future__ import annotations
 
@@ -9,49 +9,32 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
-from src.agents.graph import compile_graph
+from src.agents.agentic import run_agentic_turn
 from ml.config import MODEL_NAME
 from src.mcp_tools.campaign_logger_tool import get_campaign_history
 from src.mcp_tools.email_sender_tool import send_retention_email
 from src.mcp_tools.qa_sql_tool import answer_customer_question
 from src.mcp_tools.segmentation_tool import segment_customers, summarize_segments
 
+# Explicit, not relying on uvicorn's incidental config - this is what makes the agent's
+# per-tool-call logs (src/agents/agentic.py) actually show up on the server console.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Marketing Agents", version="0.1.0")
 
-_graph = None
 
-
-def get_graph():
-    global _graph
-    if _graph is None:
-        _graph = compile_graph()
-    return _graph
+class ChatTurn(BaseModel):
+    question: str
+    answer: str
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., examples=["demo full"])
+    message: str = Field(..., examples=["Find the highest churn-risk customer and draft them a retention email"])
     thread_id: str = Field(default="default")
-
-
-def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for m in messages:
-        if isinstance(m, HumanMessage):
-            role = "human"
-        elif isinstance(m, AIMessage):
-            role = "assistant"
-        else:
-            role = getattr(m, "type", m.__class__.__name__)
-        content = m.content
-        if not isinstance(content, str):
-            content = str(content)
-        out.append({"role": role, "content": content})
-    return out
+    history: list[ChatTurn] = Field(default_factory=list)
 
 
 @app.get("/health")
@@ -79,42 +62,33 @@ def config() -> dict[str, Any]:
 @app.post("/chat")
 async def chat(req: ChatRequest) -> dict[str, Any]:
     """
-    Run one user turn through the supervisor graph (stateless compile by default).
+    Run one user request through the fully agentic loop (src/agents/agentic.py) - the
+    model itself decides which MCP tools to call, in what order, and when it's done.
 
-    Use a fresh ``thread_id`` once you add a checkpointer to avoid sticky
-    ``completed_workers`` from prior demos.
+    Pass `history` (the caller's own running conversation) for multi-turn context -
+    without it every call starts fresh, with no memory of "him"/"that customer"/an
+    action requested in a previous turn. thread_id is accepted and echoed back for a
+    future server-side checkpointer, but isn't used to store memory yet.
     """
-    graph = get_graph()
-    initial = {
-        "messages": [HumanMessage(content=req.message)],
-        "completed_workers": [],
-        "next": None,
-        "campaign_plan": None,
-        "compliance_result": None,
-        "qa_result": None,
-    }
-    result = await graph.ainvoke(initial)
-    return {
-        "thread_id": req.thread_id,
-        "messages": _serialize_messages(result["messages"]),
-        "completed_workers": result.get("completed_workers"),
-        "campaign_plan": result.get("campaign_plan"),
-        "compliance_result": result.get("compliance_result"),
-        "qa_result": result.get("qa_result"),
-        "next": result.get("next"),
-    }
+    result = await run_agentic_turn(req.message, [t.model_dump() for t in req.history])
+    return {"thread_id": req.thread_id, **result}
 
 
 @app.get("/tools/summary")
 def tools_summary() -> str:
-    """Tiny discovery endpoint for humans (not used by the graph)."""
+    """Tiny discovery endpoint for humans."""
     return json.dumps(
         {
-            "workers": ["supervisor", "data_analyst", "campaign_planner", "compliance", "qa"],
+            "mode": "agentic - the model picks which tools to call itself",
+            "tools": [
+                "churn_scorer", "churn_scorer_for_customer", "segmentation",
+                "segmentation_summary", "product_match", "email_sender",
+                "campaign_history", "customer_qa",
+            ],
             "hints": [
-                "Say 'demo full' to run data → campaign → compliance.",
-                "Say 'analyze churn' for data_analyst only.",
-                "Say 'ask: <question>' to run the Q&A worker.",
+                "Just describe what you want, e.g. 'find the highest churn-risk "
+                "customer and draft them a retention email' or 'what's Paul Silas's "
+                "churn status'. Email sends are always simulated (dry_run).",
             ],
         }
     )
@@ -173,14 +147,20 @@ def campaigns_history(limit: int = 50) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+class QATurn(BaseModel):
+    question: str
+    narrative: str
+
+
 class QARequest(BaseModel):
     question: str
+    history: list[QATurn] = Field(default_factory=list)
 
 
 @app.post("/qa")
 def qa(req: QARequest) -> dict[str, Any]:
     try:
-        return answer_customer_question(req.question)
+        return answer_customer_question(req.question, [t.model_dump() for t in req.history])
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 

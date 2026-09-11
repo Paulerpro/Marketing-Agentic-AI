@@ -38,9 +38,22 @@ total_price FLOAT, quantity INTEGER, purchase_date TIMESTAMP)
 churn_scores(customer_id VARCHAR, score FLOAT, risk_label VARCHAR, run_date TIMESTAMP, \
 model_version VARCHAR)
 
+You may be given recent conversation history before the current question - use it to
+resolve pronouns and references ("him", "her", "that customer", "it") to the specific
+entity they mean, and to understand follow-ups that build on a prior answer.
+
 Rules:
-- Respond with ONLY a single PostgreSQL SELECT statement, nothing else - no prose, no \
-markdown code fences, no trailing semicolon.
+- If the message is NOT a question about this data - a greeting, small talk, a request \
+for something outside these tables, anything you can't answer with a SELECT against \
+them, EVEN AFTER using conversation history to resolve references - respond with \
+exactly the single word NOT_A_DATA_QUESTION and nothing else. Do not invent a \
+plausible-looking query for an unrelated or conversational message; a default/fallback \
+SELECT is worse than admitting you can't answer it. But a follow-up like "what should \
+we do about him" IS answerable once history tells you who "him" is - write a query \
+that pulls the relevant data (e.g. their current churn_scores row) so the answer can \
+be grounded in real numbers, rather than rejecting it.
+- Otherwise, respond with ONLY a single PostgreSQL SELECT statement, nothing else - no \
+prose, no markdown code fences, no trailing semicolon.
 - Never write or alter data, and never reference any table other than the ones listed \
 above.
 - Prefer explicit column lists over SELECT *. Add LIMIT 200 unless the question clearly \
@@ -80,12 +93,29 @@ def _strip_fence(sql: str) -> str:
     return sql.strip().rstrip(";").strip()
 
 
-def _generate_sql(question: str) -> str:
+def _history_block(history: list[dict[str, Any]] | None, max_turns: int = 5) -> str:
+    """Recent turns as plain text context, not real multi-turn messages - the model's
+    output format for this task is fixed (SQL or the sentinel), so history is framed
+    as reference material rather than something to reply "in character" to."""
+    if not history:
+        return ""
+    recent = history[-max_turns:]
+    lines = [f"Q: {h.get('question', '')}\nA: {h.get('narrative', '')}" for h in recent]
+    return (
+        "Recent conversation for context (pronouns like 'him'/'her'/'it'/'that "
+        "customer' may refer to entities mentioned here):\n"
+        + "\n\n".join(lines)
+        + "\n\n---\n\n"
+    )
+
+
+def _generate_sql(question: str, history: list[dict[str, Any]] | None = None) -> str:
     # 2048, not something smaller: Gemini's 3.x models spend part of the token budget
     # on internal reasoning, so a tight budget here truncates the SQL mid-query and
     # _validate_sql correctly (but confusingly) rejects it as "no known table".
     llm = _require_llm(max_output_tokens=2048)
-    response = llm.invoke([SystemMessage(content=SQL_SYSTEM_PROMPT), HumanMessage(content=question)])
+    prompt = _history_block(history) + f"Current question: {question}"
+    response = llm.invoke([SystemMessage(content=SQL_SYSTEM_PROMPT), HumanMessage(content=prompt)])
     return _strip_fence(extract_text(response.content))
 
 
@@ -101,38 +131,63 @@ def _validate_sql(sql: str) -> None:
         raise ValueError(f"Query does not reference any known table: {sql!r}")
 
 
-def _summarize(question: str, result_df: pd.DataFrame) -> str:
+def _summarize(question: str, result_df: pd.DataFrame, history: list[dict[str, Any]] | None = None) -> str:
     llm = _require_llm(max_output_tokens=2048)
     preview = result_df.head(20).to_dict(orient="records")
+    prompt = (
+        _history_block(history)
+        + f"Current question: {question}\n\n"
+        + f"Result rows ({len(result_df)} total, showing up to 20):\n{preview}"
+    )
     response = llm.invoke(
         [
             SystemMessage(
                 content=(
                     "Summarize SQL query results for a marketing analyst in 2-4 sentences. "
-                    "Call out concrete numbers and any notable trend or outlier. No preamble."
+                    "Call out concrete numbers and any notable trend or outlier. If the "
+                    "question explicitly asks for advice, a recommendation, or what to do, "
+                    "give one concrete suggestion grounded in the numbers you found (e.g. "
+                    "'given the 90% churn risk and no purchases since March, consider a "
+                    "targeted retention offer') - only when asked, don't editorialize "
+                    "otherwise. No preamble."
                 )
             ),
-            HumanMessage(
-                content=(
-                    f"Question: {question}\n\n"
-                    f"Result rows ({len(result_df)} total, showing up to 20):\n{preview}"
-                )
-            ),
+            HumanMessage(content=prompt),
         ]
     )
     return extract_text(response.content).strip()
 
 
-def answer_customer_question(question: str) -> dict[str, Any]:
-    """Run one NL question through generate -> validate -> execute -> narrate."""
-    sql = _generate_sql(question)
+def answer_customer_question(question: str, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Run one NL question through generate -> validate -> execute -> narrate.
+
+    history: recent turns as [{"question": ..., "narrative": ...}, ...], oldest first -
+    lets follow-ups ("what should we do about him") resolve references to a prior turn
+    instead of being answered (or rejected) with no memory of the conversation.
+    """
+    sql = _generate_sql(question, history)
+
+    if sql.strip().upper() == "NOT_A_DATA_QUESTION":
+        return {
+            "question": question,
+            "sql": None,
+            "row_count": 0,
+            "rows": [],
+            "narrative": (
+                "I can only answer questions about your customer, product, transaction, "
+                "and churn-score data - that wasn't one of those. Try something like "
+                "\"which customers are inactive for 60+ days?\" or \"what's the churn "
+                "risk for CUST0001?\""
+            ),
+        }
+
     _validate_sql(sql)
 
     with engine.connect() as conn:
         result_df = pd.read_sql(text(sql), conn)
 
     narrative = (
-        _summarize(question, result_df) if not result_df.empty else "No matching rows found."
+        _summarize(question, result_df, history) if not result_df.empty else "No matching rows found."
     )
 
     return {

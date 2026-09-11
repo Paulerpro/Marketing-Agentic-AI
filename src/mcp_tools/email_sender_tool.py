@@ -81,6 +81,9 @@ def send_retention_email(
 
     return {
         "customer_id": customer_id,
+        "email": email,
+        "first_name": first_name,
+        "churn_score": churn_score,
         "campaign_id": campaign_id,
         "template_id": template["template_id"],
         "subject": rendered["subject"],
