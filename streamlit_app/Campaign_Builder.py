@@ -33,7 +33,7 @@ with col_left:
 
     st.subheader("Agent pipeline")
     for step in ["DataAgent — fetch features", "ScoringAgent — filter segment",
-                 "CopyAgent — generate email copy (Claude)", "SendAgent — dispatch + log"]:
+                 "CopyAgent — generate email copy (AI)", "SendAgent — dispatch + log"]:
         st.markdown(f"- {step}")
 
     if st.button("Preview campaign →", type="primary", use_container_width=True):
@@ -67,7 +67,7 @@ with col_right:
                 st.text(action.get("body", ""))
 
         st.divider()
-        dry_run = st.toggle("Dry run (log only, don't call SendGrid)", value=True)
+        dry_run = st.toggle("Dry run (log only, don't call Mailgun)", value=True)
         if st.button(f"Send campaign ({len(actions)} emails) →", type="primary", use_container_width=True):
             sent, failed = 0, 0
             progress = st.progress(0.0)

@@ -1,21 +1,22 @@
 """Natural-language Q&A over customer/product/transaction data.
 
-PDF Workflow 2 (RouterAgent -> SQLAgent -> AnalysisAgent) collapsed into two Claude
+PDF Workflow 2 (RouterAgent -> SQLAgent -> AnalysisAgent) collapsed into two LLM
 calls: generate read-only SQL, validate it against an allow-list, execute it, then
-narrate the result.
+narrate the result. Provider (Claude or Gemini) is picked by src.utils.llm_provider
+based on which API key is set.
 """
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Any
 
 import pandas as pd
-from anthropic import Anthropic
+from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import text
 
 from src.db.config import engine
+from src.utils.llm_provider import extract_text, get_chat_model
 
 ALLOWED_TABLES = {"clean_customers", "clean_products", "clean_transactions"}
 FORBIDDEN_KEYWORDS = re.compile(
@@ -24,13 +25,16 @@ FORBIDDEN_KEYWORDS = re.compile(
 )
 
 SQL_SYSTEM_PROMPT = """You are a read-only SQL analyst for a PostgreSQL marketing database \
-with exactly these tables:
+with exactly these tables and column types:
 
-clean_customers(customer_id, email, name, age, gender, country, city, phone_number, \
-interests, signup_date, last_purchase_date, total_spent, purchase_frequency, churn)
-clean_products(product_id, product_name, category, description, price, stock_status)
-clean_transactions(transaction_id, customer_id, product_id, total_price, quantity, \
-purchase_date)
+clean_customers(customer_id VARCHAR, email VARCHAR, name VARCHAR, age INTEGER, \
+gender VARCHAR, country VARCHAR, city VARCHAR, phone_number VARCHAR, interests VARCHAR, \
+signup_date DATE, last_purchase_date DATE, total_spent FLOAT, purchase_frequency FLOAT, \
+churn INTEGER)
+clean_products(product_id VARCHAR, product_name VARCHAR, category VARCHAR, \
+description VARCHAR, price FLOAT, stock_status VARCHAR)
+clean_transactions(transaction_id VARCHAR, customer_id VARCHAR, product_id VARCHAR, \
+total_price FLOAT, quantity INTEGER, purchase_date TIMESTAMP)
 
 Rules:
 - Respond with ONLY a single PostgreSQL SELECT statement, nothing else - no prose, no \
@@ -39,11 +43,21 @@ markdown code fences, no trailing semicolon.
 above.
 - Prefer explicit column lists over SELECT *. Add LIMIT 200 unless the question clearly \
 asks for an aggregate.
+- churn is INTEGER (0 = active, 1 = churned), NOT boolean. Compare it with `churn = 1` \
+or `churn = 0` - never `IS TRUE`, `IS FALSE`, or a bare `WHERE churn`, all of which \
+PostgreSQL rejects on an integer column.
+- Every other column above is exactly the type listed - don't guess a different type \
+for any of them (e.g. don't treat stock_status as boolean, or price as integer).
 """
 
-# Overridable so a cost-conscious deployment can point this at a cheaper model without
-# touching code. Defaults to Anthropic's current recommended model.
-LLM_MODEL = os.getenv("QA_MODEL", "claude-opus-5")
+
+def _require_llm(max_output_tokens: int):
+    llm = get_chat_model(max_output_tokens=max_output_tokens, model_env_var="QA_MODEL")
+    if llm is None:
+        raise RuntimeError(
+            "No LLM configured - set ANTHROPIC_API_KEY or GEMINI_API_KEY to use Customer Q&A."
+        )
+    return llm
 
 
 def _strip_fence(sql: str) -> str:
@@ -55,15 +69,12 @@ def _strip_fence(sql: str) -> str:
 
 
 def _generate_sql(question: str) -> str:
-    client = Anthropic()
-    response = client.messages.create(
-        model=LLM_MODEL,
-        max_tokens=400,
-        system=SQL_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": question}],
-    )
-    raw = "".join(b.text for b in response.content if b.type == "text")
-    return _strip_fence(raw)
+    # 2048, not something smaller: Gemini's 3.x models spend part of the token budget
+    # on internal reasoning, so a tight budget here truncates the SQL mid-query and
+    # _validate_sql correctly (but confusingly) rejects it as "no known table".
+    llm = _require_llm(max_output_tokens=2048)
+    response = llm.invoke([SystemMessage(content=SQL_SYSTEM_PROMPT), HumanMessage(content=question)])
+    return _strip_fence(extract_text(response.content))
 
 
 def _validate_sql(sql: str) -> None:
@@ -79,26 +90,25 @@ def _validate_sql(sql: str) -> None:
 
 
 def _summarize(question: str, result_df: pd.DataFrame) -> str:
-    client = Anthropic()
+    llm = _require_llm(max_output_tokens=2048)
     preview = result_df.head(20).to_dict(orient="records")
-    response = client.messages.create(
-        model=LLM_MODEL,
-        max_tokens=500,
-        system=(
-            "Summarize SQL query results for a marketing analyst in 2-4 sentences. "
-            "Call out concrete numbers and any notable trend or outlier. No preamble."
-        ),
-        messages=[
-            {
-                "role": "user",
-                "content": (
+    response = llm.invoke(
+        [
+            SystemMessage(
+                content=(
+                    "Summarize SQL query results for a marketing analyst in 2-4 sentences. "
+                    "Call out concrete numbers and any notable trend or outlier. No preamble."
+                )
+            ),
+            HumanMessage(
+                content=(
                     f"Question: {question}\n\n"
                     f"Result rows ({len(result_df)} total, showing up to 20):\n{preview}"
-                ),
-            }
-        ],
+                )
+            ),
+        ]
     )
-    return "".join(b.text for b in response.content if b.type == "text").strip()
+    return extract_text(response.content).strip()
 
 
 def answer_customer_question(question: str) -> dict[str, Any]:

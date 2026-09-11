@@ -80,7 +80,7 @@ def email_sender(
 ) -> dict[str, Any]:
     """
     Send a retention email chosen by churn-score band (soft / value-led / stakes).
-    Defaults to dry_run unless SENDGRID_API_KEY is set and dry_run=False is passed
+    Defaults to dry_run unless MAILGUN_API_KEY is set and dry_run=False is passed
     explicitly - safe to call without a live send.
     """
     return send_retention_email(

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -16,14 +15,11 @@ from src.agents.state import SupervisorState
 from src.agents.tools.compliance_tools import validate_campaign_plan
 from src.agents.tools.data_tools import summarize_data_sources
 from src.utils.email_templates import render_template, select_template
+from src.utils.llm_provider import get_chat_model
 
 logger = logging.getLogger(__name__)
 
 RouteTarget = Literal["data_analyst", "campaign_planner", "compliance", "qa"]
-
-# Overridable so a cost-conscious deployment can point CopyAgent at a cheaper model
-# without touching code.
-COPY_AGENT_MODEL = os.getenv("COPY_AGENT_MODEL", "claude-opus-5")
 
 
 def _user_text(messages: list[Any]) -> str:
@@ -111,9 +107,10 @@ async def data_analyst_node(state: SupervisorState) -> dict[str, Any]:
 async def campaign_planner_node(state: SupervisorState) -> dict[str, Any]:
     """CopyAgent: draft retention emails for the current high-risk segment.
 
-    Uses Claude (via ChatAnthropic) to personalize each email, falling back to the
-    plain rendered template (src/utils/email_templates.py) if no ANTHROPIC_API_KEY is
-    set or the call fails - the graph stays usable with zero LLM spend.
+    Uses Claude or Gemini (src/utils/llm_provider.py, whichever key is set) to
+    personalize each email, falling back to the plain rendered template
+    (src/utils/email_templates.py) if no key is set or the call fails - the graph
+    stays usable with zero LLM spend.
     """
     completed = list(state.get("completed_workers") or [])
     async with mcp_tools() as tools:
@@ -143,26 +140,26 @@ async def _draft_action(customer: dict[str, Any]) -> dict[str, Any]:
     first_name = (customer.get("name") or "there").split()[0].title()
 
     subject, body_text = None, None
-    try:
-        from langchain_anthropic import ChatAnthropic
-        from pydantic import BaseModel, Field
+    llm = get_chat_model(max_output_tokens=2048, model_env_var="COPY_AGENT_MODEL")
+    if llm is not None:
+        try:
+            from pydantic import BaseModel, Field
 
-        class DraftEmail(BaseModel):
-            subject: str = Field(description="Email subject line")
-            body: str = Field(description="Email body, 80-150 words")
+            class DraftEmail(BaseModel):
+                subject: str = Field(description="Email subject line")
+                body: str = Field(description="Email body, 80-150 words")
 
-        llm = ChatAnthropic(model=COPY_AGENT_MODEL, max_tokens=600)
-        structured = llm.with_structured_output(DraftEmail)
-        prompt = (
-            f"Write a retention email for {first_name}, churn risk score {score:.2f} "
-            f"(band: {template['score_band']}). Use this template for tone and offer, "
-            f"personalize naturally, keep the same offer and CTA intent:\n\n"
-            f"Subject: {template['subject']}\nBody:\n{template['body']}"
-        )
-        draft = await structured.ainvoke(prompt)
-        subject, body_text = draft.subject, draft.body
-    except Exception as e:
-        logger.info("CopyAgent LLM draft unavailable (%s), using rendered template", e)
+            structured = llm.with_structured_output(DraftEmail)
+            prompt = (
+                f"Write a retention email for {first_name}, churn risk score {score:.2f} "
+                f"(band: {template['score_band']}). Use this template for tone and offer, "
+                f"personalize naturally, keep the same offer and CTA intent:\n\n"
+                f"Subject: {template['subject']}\nBody:\n{template['body']}"
+            )
+            draft = await structured.ainvoke(prompt)
+            subject, body_text = draft.subject, draft.body
+        except Exception as e:
+            logger.info("CopyAgent LLM draft unavailable (%s), using rendered template", e)
 
     if subject is None or body_text is None:
         rendered = render_template(template, {"first_name": first_name})
@@ -194,7 +191,8 @@ def compliance_node(state: SupervisorState) -> dict[str, Any]:
 
 async def qa_node(state: SupervisorState) -> dict[str, Any]:
     """PDF Workflow 2 (RouterAgent -> SQLAgent -> AnalysisAgent), via the customer_qa
-    MCP tool. Requires ANTHROPIC_API_KEY - returns an error payload without one."""
+    MCP tool. Requires an LLM key (ANTHROPIC_API_KEY or GEMINI_API_KEY) - returns an
+    error payload without one."""
     completed = list(state.get("completed_workers") or [])
     question = _user_text(state["messages"])
     payload: dict[str, Any]

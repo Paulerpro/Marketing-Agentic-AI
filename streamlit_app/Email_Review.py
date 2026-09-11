@@ -48,7 +48,7 @@ for action in actions:
 
 st.divider()
 approved = [a for a in actions if st.session_state.email_review_status.get(a.get("customer_id"), "approved") == "approved"]
-dry_run = st.toggle("Dry run (log only, don't call SendGrid)", value=True)
+dry_run = st.toggle("Dry run (log only, don't call Mailgun)", value=True)
 
 if st.button(f"Send {len(approved)} approved email(s) →", type="primary", disabled=not approved):
     sent, failed = 0, 0

@@ -1,4 +1,11 @@
-"""SendGrid dispatch for retention emails. Falls back to dry_run when no API key is set."""
+"""Mailgun dispatch for retention emails. Falls back to dry_run when no API key is set.
+
+Note on Mailgun sandbox domains (sandboxXXXX.mailgun.org, the free tier used during
+dev): they can only send to "Authorized Recipients" you've added and verified in the
+Mailgun dashboard (Sending > Domain settings > Authorized Recipients) - sending to any
+other address fails with a 400, not a delivery failure. That's a Mailgun sandbox
+restriction, not a bug here.
+"""
 
 from __future__ import annotations
 
@@ -13,22 +20,23 @@ from src.utils.email_templates import render_template, select_template
 logger = logging.getLogger(__name__)
 
 
-def _sendgrid_dispatch(to_email: str, subject: str, body: str) -> dict[str, Any]:
-    from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail
+def _mailgun_dispatch(to_email: str, subject: str, body: str) -> dict[str, Any]:
+    import httpx
 
-    api_key = os.getenv("SENDGRID_API_KEY")
-    from_email = os.getenv("SENDGRID_FROM_EMAIL", "retention@example.com")
+    api_key = os.getenv("MAILGUN_API_KEY")
+    domain = os.getenv("MAILGUN_DOMAIN") or os.getenv("SANDBOX_DOMAIN")
+    base_url = (os.getenv("BASE_URL") or "https://api.mailgun.net").rstrip("/")
+    from_email = os.getenv("MAILGUN_FROM_EMAIL", f"MarketMind AI <mailgun@{domain}>")
 
-    message = Mail(
-        from_email=from_email,
-        to_emails=to_email,
-        subject=subject,
-        plain_text_content=body,
+    response = httpx.post(
+        f"{base_url}/v3/{domain}/messages",
+        auth=("api", api_key),
+        data={"from": from_email, "to": to_email, "subject": subject, "text": body},
+        timeout=30.0,
     )
-    client = SendGridAPIClient(api_key)
-    response = client.send(message)
-    return {"status_code": response.status_code}
+    response.raise_for_status()
+    payload = response.json()
+    return {"status_code": response.status_code, "mailgun_id": payload.get("id"), "message": payload.get("message")}
 
 
 def send_retention_email(
@@ -42,22 +50,24 @@ def send_retention_email(
     """
     Send (or simulate) one retention email chosen by churn score band.
 
-    dry_run: defaults to True unless explicitly False AND SENDGRID_API_KEY is set —
+    dry_run: defaults to True unless explicitly False AND MAILGUN_API_KEY is set -
     prevents accidental real sends when the key is missing or in demo/portfolio runs.
     """
     template = select_template(churn_score)
     rendered = render_template(template, {"first_name": first_name})
     campaign_id = campaign_id or f"campaign-{uuid.uuid4().hex[:8]}"
 
-    has_key = bool(os.getenv("SENDGRID_API_KEY"))
+    has_key = bool(os.getenv("MAILGUN_API_KEY")) and bool(
+        os.getenv("MAILGUN_DOMAIN") or os.getenv("SANDBOX_DOMAIN")
+    )
     effective_dry_run = True if dry_run is None else dry_run
     if not effective_dry_run and not has_key:
-        logger.warning("SENDGRID_API_KEY not set — forcing dry_run for %s", customer_id)
+        logger.warning("MAILGUN_API_KEY/domain not set - forcing dry_run for %s", customer_id)
         effective_dry_run = True
 
     dispatch_result: dict[str, Any] = {"simulated": True}
     if not effective_dry_run:
-        dispatch_result = _sendgrid_dispatch(email, rendered["subject"], rendered["body"])
+        dispatch_result = _mailgun_dispatch(email, rendered["subject"], rendered["body"])
         dispatch_result["simulated"] = False
 
     log_row = log_campaign_event(

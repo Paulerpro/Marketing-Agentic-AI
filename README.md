@@ -5,7 +5,7 @@ multi-agent pipeline that segments customers, drafts retention emails with Claud
 answers natural-language questions over the data, and retrains itself with a
 PSI-based drift gate and a human promotion gate — all surfaced through a
 multi-page Streamlit UI. Zero-budget stack: Postgres, MLflow (SQLite backend),
-CatBoost, Claude API, SendGrid, Streamlit.
+CatBoost, Claude API (or Gemini free tier), Mailgun, Streamlit.
 
 Portfolio project — see `TODO.txt` for the original architecture notes and
 `MarketMind_AI_Platform_Plan.pdf` (kept out of the repo) for the initial design doc
@@ -39,7 +39,7 @@ flowchart LR
     CD -- stdio --> MCP
     MCP --> DB
     MCP --> MLF
-    G -- ChatAnthropic (CopyAgent, Q&A) --> Claude[Claude API]
+    G -- CopyAgent, Q&A --> LLM["Claude or Gemini\n(src/utils/llm_provider.py)"]
 ```
 
 **Why MCP.** The tool layer (`src/mcp_tools/*.py`) is implemented once, as an MCP
@@ -59,7 +59,7 @@ docker compose -f deployment/docker-compose.yml up --build
 - Streamlit: http://localhost:8501
 - API: http://localhost:8000 (docs at `/docs`)
 - Postgres auto-seeds from `data/sample_data.sql` on first boot.
-- Set `ANTHROPIC_API_KEY` / `SENDGRID_API_KEY` in your shell before `up` to enable
+- Set `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`) / `MAILGUN_API_KEY`+`SANDBOX_DOMAIN` in your shell before `up` to enable
   live LLM drafting / real email sends — both are optional and degrade gracefully
   (CopyAgent falls back to a static template; email sends default to `dry_run`).
 - **First run only:** train and promote a first churn model —
@@ -70,7 +70,7 @@ docker compose -f deployment/docker-compose.yml up --build
 ```bash
 python -m venv venv && venv\Scripts\activate   # or source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in DB_* (and optionally ANTHROPIC_API_KEY, SENDGRID_API_KEY)
+cp .env.example .env   # fill in DB_* (and optionally ANTHROPIC_API_KEY or GEMINI_API_KEY, MAILGUN_API_KEY)
 
 # seed Postgres once (or apply data/sample_data.sql with any Postgres client)
 python -c "from src.db.config import Base, engine; Base.metadata.create_all(engine)"
@@ -123,7 +123,7 @@ for testing: `python -m src.mcp_server`.
   the docstring in `src/agents/mcp_client.py`). A `demo full` run costs ~2 spawns;
   each re-imports pandas/mlflow/catboost, so expect ~10-50s rather than sub-second.
 - **Campaign open/click tracking** (`campaign_log.opened`/`.clicked`) has columns but
-  no SendGrid event webhook wired up yet — they stay `false`.
+  no Mailgun event webhook wired up yet — they stay `false`.
 - **Point-in-time feature correctness**: `as_of_end_date` now bounds which
   transactions and dates feed each feature (fixed a real data-leakage bug — see
   `git log` on `src/data_pipeline/preprocess.py`), but features are still computed

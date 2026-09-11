@@ -1,5 +1,5 @@
 """Campaign History & Analytics - past campaigns, dispatch log, open/click
-attribution (PDF campaign_log table; open/click tracking needs a SendGrid webhook,
+attribution (PDF campaign_log table; open/click tracking needs a Mailgun webhook,
 not yet wired - see README)."""
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ col2.metric("Live sends", int((~df["dry_run"]).sum()))
 col3.metric("Opened", int(df["opened"].sum()))
 col4.metric("Clicked", int(df["clicked"].sum()))
 
-st.caption("Opened/clicked columns are placeholders until a SendGrid event webhook is wired to update them.")
+st.caption("Opened/clicked columns are placeholders until a Mailgun event webhook is wired to update them.")
 
 st.divider()
 st.subheader("By template")

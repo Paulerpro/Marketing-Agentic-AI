@@ -1,6 +1,7 @@
 """Customer Intelligence Q&A - natural-language queries over customer, transaction
-and product data (PDF Workflow 2 / mockup p.6). Needs ANTHROPIC_API_KEY on the API
-server; without one, questions return a clear error instead of a fake answer."""
+and product data (PDF Workflow 2 / mockup p.6). Needs an LLM key on the API server
+(ANTHROPIC_API_KEY or GEMINI_API_KEY - see src/utils/llm_provider.py); without one,
+questions return a clear error instead of a fake answer."""
 
 from __future__ import annotations
 
@@ -58,4 +59,4 @@ if question:
                      "sql": result.get("sql", ""), "rows": result.get("rows")}
                 )
             except Exception as e:
-                error_banner(e, "Q&A failed (needs ANTHROPIC_API_KEY on the API server)")
+                error_banner(e, "Q&A failed (needs ANTHROPIC_API_KEY or GEMINI_API_KEY on the API server)")

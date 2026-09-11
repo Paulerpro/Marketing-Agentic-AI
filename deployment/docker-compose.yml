@@ -33,8 +33,11 @@ services:
       DB_NAME: ai_marketing_agent
       MLFLOW_TRACKING_URI: sqlite:////app/mlflow_store/mlflow.db
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-retention@example.com}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+      SANDBOX_DOMAIN: ${SANDBOX_DOMAIN:-}
+      BASE_URL: ${BASE_URL:-https://api.mailgun.net}
+      MAILGUN_FROM_EMAIL: ${MAILGUN_FROM_EMAIL:-}
     volumes:
       - mlflow_store:/app/mlflow_store
     depends_on:

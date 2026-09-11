@@ -32,10 +32,16 @@ services:
         value: sqlite:////app/mlflow_store/mlflow.db
       - key: ANTHROPIC_API_KEY
         sync: false # set manually in the Render dashboard
-      - key: SENDGRID_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      - key: SENDGRID_FROM_EMAIL
-        value: retention@example.com
+      - key: MAILGUN_API_KEY
+        sync: false
+      - key: SANDBOX_DOMAIN
+        sync: false
+      - key: BASE_URL
+        value: https://api.mailgun.net
+      - key: MAILGUN_FROM_EMAIL
+        sync: false
     disk:
       name: mlflow-store
       mountPath: /app/mlflow_store

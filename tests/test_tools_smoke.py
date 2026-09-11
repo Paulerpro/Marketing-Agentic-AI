@@ -70,7 +70,7 @@ def _initial_state(message: str) -> dict:
 @pytest.mark.integration
 def test_graph_demo_full_optional():
     """Needs DB + a Production churn model (via MCP subprocess); LLM steps degrade
-    gracefully to rendered templates without ANTHROPIC_API_KEY."""
+    gracefully to rendered templates without ANTHROPIC_API_KEY or GEMINI_API_KEY."""
     from src.agents.graph import compile_graph
 
     g = compile_graph()
@@ -94,7 +94,7 @@ def test_graph_analyze_keyword_no_db_crash():
 
 
 def test_graph_qa_keyword_no_key_crash():
-    """Should complete even without ANTHROPIC_API_KEY / DB (worker catches errors)."""
+    """Should complete even without an LLM key / DB (worker catches errors)."""
     from src.agents.graph import compile_graph
 
     g = compile_graph()
